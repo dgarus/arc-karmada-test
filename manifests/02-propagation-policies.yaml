@@ -21,7 +21,8 @@ spec:
       - member-2
 ---
 # 2. 单一 Listener 及其依赖凭证定向分发策略
-# 将 Listener Pod 及所需的跨集群认证 Secret、ServiceAccount 调度到指定集群 (如 member-1)
+# Listener Pod/ServiceAccount выбираются по стабильным ARC labels,
+# config Secret — по явно заданному label, без привязки к generated hash.
 apiVersion: policy.karmada.io/v1alpha1
 kind: PropagationPolicy
 metadata:
@@ -31,17 +32,24 @@ spec:
   resourceSelectors:
   - apiVersion: v1
     kind: Pod
-    # 匹配 Listener Pod 名称前缀或完整名称
-    name: karmada-runner-fdfdcc69-listener
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/component: runner-scale-set-listener
+        actions.github.com/scale-set-name: karmada-runner
   - apiVersion: v1
     kind: Secret
     name: karmada-token
   - apiVersion: v1
     kind: Secret
-    name: karmada-runner-fdfdcc69-listener-config
+    labelSelector:
+      matchLabels:
+        arc-karmada-test/listener-config: "true"
   - apiVersion: v1
     kind: ServiceAccount
-    name: karmada-runner-fdfdcc69-listener
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/component: runner-scale-set-listener
+        actions.github.com/scale-set-name: karmada-runner
   placement:
     clusterAffinity:
       clusterNames:

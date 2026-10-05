@@ -26,6 +26,9 @@ spec:
   runnerScaleSetName: karmada-runner
   minRunners: 0
   maxRunners: 5
+  listenerConfigSecretMetadata:
+    labels:
+      arc-karmada-test/listener-config: "true"
   listenerTemplate:
     spec:
       hostAliases:
