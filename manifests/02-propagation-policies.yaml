@@ -17,11 +17,11 @@ spec:
   placement:
     clusterAffinity:
       clusterNames:
-      - member1
-      - member2
+      - member-1
+      - member-2
 ---
 # 2. 单一 Listener 及其依赖凭证定向分发策略
-# 将 Listener Pod 及所需的跨集群认证 Secret、ServiceAccount 调度到指定集群 (如 member1)
+# 将 Listener Pod 及所需的跨集群认证 Secret、ServiceAccount 调度到指定集群 (如 member-1)
 apiVersion: policy.karmada.io/v1alpha1
 kind: PropagationPolicy
 metadata:
@@ -45,7 +45,7 @@ spec:
   placement:
     clusterAffinity:
       clusterNames:
-      - member1
+      - member-1
 ---
 # 3. 核心机制 ③：Runner Pod 跨集群分摊调度与 JIT Secret 依赖自动穿透策略
 # - propagateDeps: true: Karmada 自动解析 Runner Pod 环境变量中通过 secretKeyRef
@@ -64,8 +64,8 @@ spec:
   placement:
     clusterAffinity:
       clusterNames:
-      - member1
-      - member2
+      - member-1
+      - member-2
     replicaScheduling:
       replicaSchedulingType: Divided
       replicaDivisionPreference: Weighted

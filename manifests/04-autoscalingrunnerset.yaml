@@ -16,11 +16,12 @@ metadata:
   namespace: arc-runners
   labels:
     app.kubernetes.io/component: "autoscaling-runner-set"
+    app.kubernetes.io/version: "0.14.2"
     app.kubernetes.io/part-of: gha-rs
     actions.github.com/scale-set-name: karmada-runner
     actions.github.com/scale-set-namespace: arc-runners
 spec:
-  githubConfigUrl: https://github.com/pkking/arc-karmada-test
+  githubConfigUrl: https://github.com/dgarus/arc-karmada-test
   githubConfigSecret: arc-github-secret
   runnerScaleSetName: karmada-runner
   minRunners: 0
@@ -29,7 +30,7 @@ spec:
     spec:
       hostAliases:
       # 请根据实际环境将 IP 替换为 Karmada 控制面宿主机/容器网桥 IP
-      - ip: "172.22.0.4"
+      - ip: "172.19.0.2"
         hostnames:
         - "karmada-apiserver"
       containers:
