@@ -1,8 +1,6 @@
 name: Test Unified ARC Karmada Multi-Cluster
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 jobs:
   job-1:
