@@ -1,0 +1,78 @@
+name: Test Parallel Ascend NPU via ARC Karmada
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [karmada-integration-test]
+    paths:
+      - .github/workflows/test-ascend-npu-parallel.yml
+
+jobs:
+  npu-matmul:
+    name: NPU Device ${{ matrix.device }}
+    runs-on: karmada-runner
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        device: [0, 1, 2, 3, 4]
+
+    env:
+      NPU_DEVICE: ${{ matrix.device }}
+
+    steps:
+      - name: Report Runner
+        run: |
+          echo "Job: $GITHUB_JOB"
+          echo "NPU Device: $NPU_DEVICE"
+          echo "Hostname: $(hostname)"
+          echo "Started: $(date -u -Iseconds)"
+          id
+          docker version
+
+      - name: Pull PyTorch NPU image
+        run: |
+          docker pull 172.19.0.5:5000/cann-pytorch-npu:9.1.0
+
+      - name: Execute Ascend NPU MATMUL
+        run: |
+          docker run --rm --privileged \
+            -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+            -e ASCEND_RT_VISIBLE_DEVICES="$NPU_DEVICE" \
+            --entrypoint /bin/bash \
+            172.19.0.5:5000/cann-pytorch-npu:9.1.0 \
+            -lc '
+              export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64/driver:${LD_LIBRARY_PATH:-}"
+
+              /workspace/venvs/.aclprof-kineto-impl/bin/python - <<PY
+          import os
+          import torch
+          import torch_npu
+
+          device = os.environ["ASCEND_RT_VISIBLE_DEVICES"]
+          print("Selected NPU:", device)
+
+          assert torch.npu.is_available(), "NPU unavailable"
+
+          a = torch.ones((32, 32), device="npu:0")
+          b = torch.ones((32, 32), device="npu:0")
+
+          c = torch.matmul(a, b)
+          torch.npu.synchronize()
+
+          assert c.device.type == "npu"
+          assert torch.allclose(
+              c.cpu(),
+              torch.full((32, 32), 32.0)
+          )
+
+          print("NPU DEVICE", device, "MATMUL: PASS")
+          PY
+            '
+
+      - name: Report Completion
+        run: |
+          echo "NPU Device $NPU_DEVICE completed successfully"
+          echo "Finished: $(date -u -Iseconds)"
