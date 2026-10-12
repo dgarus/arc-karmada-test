@@ -1,0 +1,57 @@
+name: Test Ascend NPU via ARC Karmada
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [karmada-integration-test]
+    paths:
+      - .github/workflows/test-ascend-npu.yml
+
+jobs:
+  npu-matmul:
+    runs-on: karmada-runner
+    timeout-minutes: 45
+
+    steps:
+      - name: Report Runner and Docker
+        run: |
+          echo "Runner hostname: $(hostname)"
+          echo "GitHub job: $GITHUB_JOB"
+          id
+          docker version
+
+      - name: Pull PyTorch NPU image
+        run: |
+          docker pull 172.19.0.5:5000/cann-pytorch-npu:9.1.0
+
+      - name: Execute Ascend NPU MATMUL
+        run: |
+          docker run --rm --privileged \
+            -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+            -e ASCEND_RT_VISIBLE_DEVICES=0 \
+            --entrypoint /bin/bash \
+            172.19.0.5:5000/cann-pytorch-npu:9.1.0 \
+            -lc '
+              export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64/driver:${LD_LIBRARY_PATH:-}"
+
+              /workspace/venvs/.aclprof-kineto-impl/bin/python - <<PY
+          import torch
+          import torch_npu
+
+          assert torch.npu.is_available(), "NPU unavailable"
+
+          a = torch.ones((32, 32), device="npu:0")
+          b = torch.ones((32, 32), device="npu:0")
+
+          c = torch.matmul(a, b)
+          torch.npu.synchronize()
+
+          assert c.device.type == "npu"
+          assert torch.allclose(
+              c.cpu(),
+              torch.full((32, 32), 32.0)
+          )
+
+          print("GITHUB -> ARC -> KARMADA -> DIND -> ASCEND NPU: PASS")
+          PY
+            '
