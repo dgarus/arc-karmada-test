@@ -25,10 +25,45 @@ jobs:
           docker pull 172.19.0.5:5000/cann-pytorch-npu:9.1.0
 
       - name: Execute Ascend NPU MATMUL
+        shell: bash
         run: |
+          set -euo pipefail
+
+          FILE=/home/runner/_work/.ascend-visible-devices
+
+          for i in $(seq 1 30); do
+            [ -s "$FILE" ] && break
+            sleep 1
+          done
+
+          if [ ! -s "$FILE" ]; then
+            echo "ERROR: NPU allocation file missing"
+            exit 1
+          fi
+
+          IDS="$(tr -d '[:space:]' < "$FILE")"
+          IFS=, read -r FIRST SECOND EXTRA <<< "$IDS"
+
+          if [[ ! "$FIRST" =~ ^[0-7]$ ||
+                ! "$SECOND" =~ ^[0-7]$ ||
+                "$FIRST" == "$SECOND" ||
+                -n "${EXTRA:-}" ]]; then
+            echo "ERROR: Invalid NPU allocation: $IDS"
+            exit 1
+          fi
+
+          SELECTED="$FIRST"
+
+          if [ "$SELECTED" = "1" ]; then
+            SELECTED="$SECOND"
+          fi
+
+          echo "ALLOCATED_PHYSICAL_NPUS=$IDS"
+          echo "SELECTED_PHYSICAL_NPU=$SELECTED"
+
           docker run --rm --privileged \
             -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
-            -e ASCEND_RT_VISIBLE_DEVICES=0 \
+            -e ASCEND_RT_VISIBLE_DEVICES="$SELECTED" \
             --entrypoint /bin/bash \
             172.19.0.5:5000/cann-pytorch-npu:9.1.0 \
             -lc '
@@ -38,6 +73,8 @@ jobs:
           import torch
           import torch_npu
 
+          print("NPU_COUNT:", torch.npu.device_count())
+          assert torch.npu.device_count() == 1, "Expected one visible NPU"
           assert torch.npu.is_available(), "NPU unavailable"
 
           a = torch.ones((32, 32), device="npu:0")
