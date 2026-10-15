@@ -9,7 +9,7 @@ on:
 
 jobs:
   npu-matmul:
-    name: NPU Device ${{ matrix.device }}
+    name: NPU Job ${{ matrix.job }}
     runs-on: karmada-runner
     timeout-minutes: 60
 
@@ -17,16 +17,16 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix:
-        device: [0, 1, 2, 3, 4]
+        job: [1, 2, 3, 4, 5]
 
     env:
-      NPU_DEVICE: ${{ matrix.device }}
+      NPU_JOB: ${{ matrix.job }}
 
     steps:
       - name: Report Runner
         run: |
           echo "Job: $GITHUB_JOB"
-          echo "NPU Device: $NPU_DEVICE"
+          echo "NPU Job: $NPU_JOB"
           echo "Hostname: $(hostname)"
           echo "Started: $(date -u -Iseconds)"
           id
@@ -37,23 +37,56 @@ jobs:
           docker pull 172.19.0.5:5000/cann-pytorch-npu:9.1.0
 
       - name: Execute Ascend NPU MATMUL
+        shell: bash
         run: |
+          set -euo pipefail
+
+          FILE=/home/runner/_work/.ascend-visible-devices
+
+          for i in $(seq 1 30); do
+            [ -s "$FILE" ] && break
+            sleep 1
+          done
+
+          if [ ! -s "$FILE" ]; then
+            echo "ERROR: NPU allocation file missing"
+            exit 1
+          fi
+
+          IDS="$(tr -d '[:space:]' < "$FILE")"
+          IFS=, read -r FIRST SECOND EXTRA <<< "$IDS"
+
+          if [[ ! "$FIRST" =~ ^[0-7]$ ||
+                ! "$SECOND" =~ ^[0-7]$ ||
+                "$FIRST" == "$SECOND" ||
+                -n "${EXTRA:-}" ]]; then
+            echo "ERROR: Invalid NPU allocation: $IDS"
+            exit 1
+          fi
+
+          SELECTED="$FIRST"
+
+          if [ "$SELECTED" = "1" ]; then
+            SELECTED="$SECOND"
+          fi
+
+          echo "ALLOCATED_PHYSICAL_NPUS=$IDS"
+          echo "SELECTED_PHYSICAL_NPU=$SELECTED"
+
           docker run --rm --privileged \
             -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
-            -e ASCEND_RT_VISIBLE_DEVICES="$NPU_DEVICE" \
+            -e ASCEND_RT_VISIBLE_DEVICES="$SELECTED" \
             --entrypoint /bin/bash \
             172.19.0.5:5000/cann-pytorch-npu:9.1.0 \
             -lc '
               export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64/driver:${LD_LIBRARY_PATH:-}"
 
               /workspace/venvs/.aclprof-kineto-impl/bin/python - <<PY
-          import os
           import torch
           import torch_npu
 
-          device = os.environ["ASCEND_RT_VISIBLE_DEVICES"]
-          print("Selected NPU:", device)
-
+          print("NPU_COUNT:", torch.npu.device_count())
+          assert torch.npu.device_count() == 1, "Expected one visible NPU"
           assert torch.npu.is_available(), "NPU unavailable"
 
           a = torch.ones((32, 32), device="npu:0")
@@ -68,11 +101,16 @@ jobs:
               torch.full((32, 32), 32.0)
           )
 
-          print("NPU DEVICE", device, "MATMUL: PASS")
+          print("GITHUB -> ARC -> KARMADA -> DIND -> ASCEND NPU: PASS")
           PY
             '
 
+      - name: Hold NPU reservation for observation
+        run: |
+          echo "Holding NPU allocation for 120 seconds"
+          sleep 120
+
       - name: Report Completion
         run: |
-          echo "NPU Device $NPU_DEVICE completed successfully"
+          echo "NPU Job $NPU_JOB completed successfully"
           echo "Finished: $(date -u -Iseconds)"
