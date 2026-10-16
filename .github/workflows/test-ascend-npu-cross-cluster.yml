@@ -1,0 +1,134 @@
+name: Cross-Cluster Ascend NPU E2E
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [karmada-integration-test]
+    paths:
+      - .github/npu-cross-cluster-trigger.txt
+
+jobs:
+  npu-matmul:
+    name: NPU Job ${{ matrix.job }}
+    runs-on: karmada-runner-npu1
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        job: [1, 2, 3, 4, 5, 6, 7, 8]
+
+    env:
+      NPU_JOB: ${{ matrix.job }}
+
+    steps:
+      - name: Report Runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "JOB=$NPU_JOB"
+          echo "HOSTNAME=$(hostname)"
+          echo "GITHUB_RUN_ID=$GITHUB_RUN_ID"
+          echo "STARTED=$(date -u -Iseconds)"
+          id
+          docker version
+
+      - name: Pull PyTorch NPU image
+        run: |
+          docker pull 172.19.0.5:5000/cann-pytorch-npu:9.1.0
+
+      - name: Execute sustained Ascend NPU MATMUL
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILE=/home/runner/_work/.ascend-visible-devices
+
+          for i in $(seq 1 30); do
+            [ -s "$FILE" ] && break
+            sleep 1
+          done
+
+          if [ ! -s "$FILE" ]; then
+            echo "ERROR: NPU allocation file missing"
+            exit 1
+          fi
+
+          ID="$(tr -d '[:space:]' < "$FILE")"
+
+          case "$ID" in
+            2|3|5|6|7) ;;
+            *)
+              echo "ERROR: Expected exactly one allowed physical NPU, got: $ID"
+              exit 1
+              ;;
+          esac
+
+          echo "ALLOCATED_PHYSICAL_NPU=$ID"
+          echo "JOB=$NPU_JOB"
+          echo "COMPUTE_DURATION=120s"
+
+          docker run --rm --privileged \
+            -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
+            -e ASCEND_RT_VISIBLE_DEVICES="$ID" \
+            -e PHYSICAL_NPU="$ID" \
+            -e NPU_JOB="$NPU_JOB" \
+            --entrypoint /bin/bash \
+            172.19.0.5:5000/cann-pytorch-npu:9.1.0 \
+            -lc '
+              export LD_LIBRARY_PATH="/usr/local/Ascend/driver/lib64/driver:${LD_LIBRARY_PATH:-}"
+
+              /workspace/venvs/.aclprof-kineto-impl/bin/python - <<PY
+          import os
+          import time
+          import torch
+          import torch_npu
+
+          print("JOB:", os.environ.get("NPU_JOB"), flush=True)
+          print("PHYSICAL_NPU:", os.environ.get("PHYSICAL_NPU"), flush=True)
+          print("NPU_COUNT:", torch.npu.device_count(), flush=True)
+
+          assert torch.npu.device_count() == 1
+          assert torch.npu.is_available()
+
+          a = torch.ones((1024, 1024), device="npu:0")
+          b = torch.ones((1024, 1024), device="npu:0")
+          expected = torch.full((1024, 1024), 1024.0)
+
+          started = time.monotonic()
+          last_report = started
+          iterations = 0
+
+          while time.monotonic() - started < 120:
+              c = torch.matmul(a, b)
+              torch.npu.synchronize()
+              iterations += 1
+
+              if iterations == 1 or iterations % 20 == 0:
+                  assert torch.allclose(c.cpu(), expected)
+
+              now = time.monotonic()
+
+              if now - last_report >= 15:
+                  print(
+                      "NPU_PROGRESS",
+                      "iterations=", iterations,
+                      "elapsed=", round(now - started, 1),
+                      "device=", c.device,
+                      flush=True
+                  )
+                  last_report = now
+
+          assert iterations > 0
+          assert torch.allclose(c.cpu(), expected)
+
+          print("TOTAL_ITERATIONS:", iterations, flush=True)
+          print("GITHUB -> ARC -> KARMADA -> ASCEND NPU: PASS", flush=True)
+          PY
+            '
+
+      - name: Report Completion
+        run: |
+          echo "NPU Job $NPU_JOB completed successfully"
+          echo "Finished: $(date -u -Iseconds)"
